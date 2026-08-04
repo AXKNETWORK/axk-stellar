@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AXK × MoneyGram Ramps Demo</title>
+    <style>
+      :root {
+        --bg: #0b1220;
+        --panel: #121a2b;
+        --text: #e8eefc;
+        --muted: #9aa8c7;
+        --accent: #e11d48;
+        --ok: #34d399;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans", system-ui, sans-serif;
+        background: radial-gradient(1200px 600px at 10% -10%, #1e293b, var(--bg));
+        color: var(--text);
+        min-height: 100vh;
+      }
+      header {
+        padding: 1rem 1.25rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #243049;
+      }
+      h1 { font-size: 1rem; margin: 0; font-weight: 600; letter-spacing: 0.02em; }
+      main { display: grid; grid-template-columns: 320px 1fr; gap: 0; min-height: calc(100vh - 57px); }
+      aside {
+        padding: 1.25rem;
+        background: var(--panel);
+        border-right: 1px solid #243049;
+      }
+      label { display: block; font-size: 0.75rem; color: var(--muted); margin: 0.75rem 0 0.35rem; }
+      input, select, button, textarea {
+        width: 100%;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: #0f172a;
+        color: var(--text);
+        padding: 0.65rem 0.75rem;
+        font: inherit;
+      }
+      button {
+        background: var(--accent);
+        border: none;
+        font-weight: 600;
+        cursor: pointer;
+        margin-top: 1rem;
+      }
+      button.secondary { background: #334155; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      #log {
+        margin-top: 1rem;
+        font-family: ui-monospace, monospace;
+        font-size: 0.72rem;
+        color: var(--muted);
+        white-space: pre-wrap;
+        max-height: 280px;
+        overflow: auto;
+      }
+      .ok { color: var(--ok); }
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #fff;
+      }
+      .empty {
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        padding: 2rem;
+        text-align: center;
+      }
+      @media (max-width: 900px) {
+        main { grid-template-columns: 1fr; }
+        iframe { min-height: 70vh; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>AXK × MoneyGram Ramps (sandbox)</h1>
+      <span id="envLabel" style="color: var(--muted); font-size: 0.85rem">custodial</span>
+    </header>
+    <main>
+      <aside>
+        <label>Flow</label>
+        <select id="kind">
+          <option value="cash-out">Cash out (USDC → cash)</option>
+          <option value="cash-in">Cash in (cash → USDC)</option>
+        </select>
+        <label>User / org id (SEP-10 memo)</label>
+        <input id="userId" value="1001" />
+        <label>Amount (USDC)</label>
+        <input id="amount" value="25.00" />
+        <button id="start">Start MoneyGram flow</button>
+        <button id="watch" class="secondary" disabled>Watch + settle USDC</button>
+        <div id="log"></div>
+      </aside>
+      <section id="frameWrap">
+        <div class="empty" id="empty">
+          Start a flow to open MoneyGram’s interactive UI here.<br />
+          After whitelist, cash-out auto-sends USDC when status is pending_user_transfer_start.
+        </div>
+        <iframe id="frame" hidden title="MoneyGram Ramps"></iframe>
+      </section>
+    </main>
+    <script>
+      const logEl = document.getElementById("log");
+      const frame = document.getElementById("frame");
+      const empty = document.getElementById("empty");
+      const watchBtn = document.getElementById("watch");
+      let current = null;
+
+      function log(msg, cls) {
+        const line = document.createElement("div");
+        if (cls) line.className = cls;
+        line.textContent = msg;
+        logEl.prepend(line);
+      }
+
+      const params = new URLSearchParams(location.search);
+      if (params.get("url")) {
+        openUrl(params.get("url"));
+        current = {
+          userId: params.get("userId"),
+          id: params.get("txId"),
+        };
+        if (current.userId && current.id) watchBtn.disabled = false;
+      }
+
+      function openUrl(url) {
+        empty.hidden = true;
+        frame.hidden = false;
+        frame.src = url;
+      }
+
+      document.getElementById("start").onclick = async () => {
+        const kind = document.getElementById("kind").value;
+        const userId = document.getElementById("userId").value.trim();
+        const amount = document.getElementById("amount").value.trim();
+        log(`Starting ${kind}…`);
+        try {
+          const res = await fetch(`/v1/ramps/${kind}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId, amount }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || res.statusText);
+          current = data;
+          openUrl(data.url);
+          watchBtn.disabled = false;
+          log(`tx ${data.id}`, "ok");
+          history.replaceState(
+            null,
+            "",
+            `?url=${encodeURIComponent(data.url)}&userId=${encodeURIComponent(data.userId)}&txId=${encodeURIComponent(data.id)}`,
+          );
+        } catch (e) {
+          log(String(e.message || e));
+        }
+      };
+
+      document.getElementById("watch").onclick = async () => {
+        if (!current) return;
+        log("Watching / settling…");
+        try {
+          const res = await fetch(
+            `/v1/ramps/${current.userId}/${current.id}/watch`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ autoSendUsdc: true }),
+            },
+          );
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || res.statusText);
+          log(
+            `Done status=${data.status} ref=${data.externalTransactionId || "—"}`,
+            "ok",
+          );
+        } catch (e) {
+          log(String(e.message || e));
+        }
+      };
+
+      // The anchor posts COMMIT_RESULT from its own origin when the user
+      // finishes the interactive flow. Accept it only from the frame we opened,
+      // and surface the transaction reference rather than the whole payload,
+      // which carries the KYC fields the user just entered.
+      window.addEventListener("message", (event) => {
+        if (!frame.src || event.origin !== new URL(frame.src).origin) return;
+        const message = event.data;
+        if (message?.type !== "COMMIT_RESULT") return;
+        log("COMMIT_RESULT from the anchor", "ok");
+        const id = message.payload?.transaction?.id ?? current;
+        const status = message.payload?.transaction?.status;
+        log(`transaction ${id}${status ? ` is ${status}` : ""}`);
+      });
+    </script>
+  </body>
+</html>

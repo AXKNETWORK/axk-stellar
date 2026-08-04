@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # A committed Stellar seed is unrecoverable once pushed: the account has to
+      # be drained and replaced. Cheaper to fail the build.
+      - name: Refuse Stellar secret seeds
+        run: |
+          if grep -rInE '\bS[A-Z2-7]{55}\b' --exclude-dir=node_modules --exclude-dir=.git .; then
+            echo "::error::A Stellar secret seed is present in the tree."
+            exit 1
+          fi
+          echo "No secret seeds found."
