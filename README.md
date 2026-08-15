@@ -1,0 +1,94 @@
+# AXK Stellar
+
+**Settlement and cash-out rails for verified commodity trade on Stellar**
+
+![Stellar](https://img.shields.io/badge/Stellar-SEP--10%20%7C%20SEP--24-black)
+![Node](https://img.shields.io/badge/Node-%E2%89%A520-green)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)
+![Soroban](https://img.shields.io/badge/Soroban-planned-lightgrey)
+![License](https://img.shields.io/badge/License-MIT-yellow)
+
+AXK settles agricultural commodity trade between African producers and international buyers. A cooperative delivers coffee, the delivery is verified, and the money has to reach several hundred farmers who do not hold crypto and want cash. This repository is the Stellar half of that: the anchor integrations that turn USDC into cash a farmer can collect, and the contracts that will hold and split the money on the way there.
+
+[Setup](docs/setup.md) · [Architecture](docs/architecture.md) · [Anchors](docs/anchors.md) · [Roadmap](docs/roadmap.md) · [Contributing](CONTRIBUTING.md)
+
+## Overview
+
+The trade record, escrow state and buyer-facing product live in AXK's main platform. This repository holds only the parts that touch Stellar directly, so they can be read, tested and audited without the rest of the application around them.
+
+Two pieces:
+
+- **`packages/anchors`** — SEP-10 authentication and SEP-24 deposit and withdrawal against anchors, starting with MoneyGram. This is working code, running against MoneyGram's sandbox today.
+- **`contracts`** — Soroban escrow, payment splitter and trade attestation. Designed, not yet implemented. See [contracts/README.md](contracts/README.md) for the interfaces and the reasoning.
+
+## Status, honestly
+
+We would rather you read this than discover it.
+
+| Component | State | Notes |
+|---|---|---|
+| SEP-10 authentication | Working | Custodial, one Stellar account with `memoId` per AXK user. Tested against MoneyGram sandbox. |
+| SEP-24 cash-out (withdraw) | Working | Interactive URL, transaction watcher, automatic USDC payment inside the transfer window. |
+| SEP-24 cash-in (deposit) | Working | Same flow inbound. |
+| Payment idempotency | Working | Re-reads the anchor record before moving money. See [`decideSend`](packages/anchors/src/moneygram.ts). |
+| MoneyGram production | Not started | Sandbox only. Production requires commercial onboarding. |
+| Second anchor | Not started | At least one equivalent payout path per corridor is the goal. |
+| Soroban contracts | Not implemented | Interfaces drafted in `contracts/`. Nothing is deployed on testnet or mainnet. |
+| Capability-aware routing | Not implemented | Currently one anchor, so there is nothing to route between yet. |
+
+## Why it is built this way
+
+**Custodial, with a memo per user.** Producers do not hold keys. AXK holds one Stellar account and identifies each user by an integer memo, which is what MoneyGram's custodial integration expects. A farmer never sees a seed phrase, never funds a reserve, and never loses money to a mistyped address.
+
+**The money decision is a pure function.** `decideSend` takes the anchor's record and the transfer deadline and returns whether to pay. It has no network access and no clock of its own, so the one decision that can lose real money is testable in isolation and is tested.
+
+**Idempotency comes from the anchor, not from memory.** An in-process "already sent" flag does not survive a restart. A crash between submitting a payment and confirming it would re-send and pay twice. So before moving USDC the client re-reads the transaction from the anchor and checks whether `stellar_transaction_id` is already stamped on it.
+
+**The transfer window is enforced.** MoneyGram gives a deadline in `user_action_required_by`. USDC sent after it closes is gone and no cash is handed over at the other end. The client refuses to send rather than paying into a closed window.
+
+## Quick start
+
+Requires Node 20 or newer.
+
+```bash
+git clone https://github.com/axknetwork/axk-stellar.git
+cd axk-stellar
+npm install
+
+cp packages/anchors/.env.example packages/anchors/.env
+# fill in MGI_AUTH_SECRET and MGI_FUNDS_SECRET with testnet seeds
+
+npm test                                  # offline tests, no network
+npm run anchors -- keys                   # show the public keys in use
+npm run anchors -- info                   # fetch the anchor TOML and SEP-24 info
+npm run anchors -- cash-out --user 100001 --amount 25
+```
+
+Full walkthrough, including how to get testnet USDC and what each transaction status means, is in [docs/setup.md](docs/setup.md).
+
+## Layout
+
+```
+packages/anchors      SEP-10 and SEP-24 client, HTTP API, CLI
+contracts             Soroban escrow, splitter and attestation (design stage)
+docs                  setup, architecture, anchor notes, roadmap
+```
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Runtime | Node 20, TypeScript 5 |
+| Stellar | `@stellar/typescript-wallet-sdk`, `@stellar/stellar-sdk` |
+| Standards | SEP-1, SEP-10, SEP-24, SEP-9 |
+| Contracts | Soroban, Rust, planned |
+| API | Express 5, Zod |
+| Tests | `node:test` via `tsx` |
+
+## Security
+
+Never commit a Stellar secret seed. `.env` and `.wallet-testnet.json` are ignored, and CI fails on anything shaped like a seed. Report vulnerabilities per [SECURITY.md](SECURITY.md) rather than opening a public issue.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
