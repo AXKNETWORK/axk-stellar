@@ -22,6 +22,7 @@ import {
 } from "@stellar/typescript-wallet-sdk";
 import type { AppConfig } from "./config";
 import { requireSecrets } from "./config";
+import { tryAcquire, release } from "./locks";
 import type {
   StartRampInput,
   StartRampResult,
@@ -184,7 +185,11 @@ export class MoneyGramRamps {
   async start(input: StartRampInput): Promise<StartRampResult> {
     const userId = asMemoId(input.userId);
     const amount = String(input.amount);
-    if (!amount || Number(amount) <= 0) {
+    // Number("NaN"), Number("abc") and Number("Infinity") are not <= 0, so a
+    // bare comparison lets all three through to the anchor, which answers with
+    // a 500 and a parser error. Check finiteness, not just the sign.
+    const parsedAmount = Number(amount);
+    if (!amount || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       throw new Error("amount must be a positive USDC string, e.g. \"25.00\"");
     }
 
@@ -264,6 +269,7 @@ export class MoneyGramRamps {
     }
 
     let sent = false;
+    const lockKey = `${this.cfg.homeDomain}:${opts.transactionId}`;
 
     return new Promise<TransactionView>((resolve, reject) => {
       const watcher = sep24.watcher();
@@ -287,6 +293,11 @@ export class MoneyGramRamps {
               return;
             }
 
+            // Two watchers on the same transaction would both re-read, both see
+            // no payment yet, and both send. The re-read below only protects a
+            // restart. Whoever loses this race leaves the settling to the winner.
+            if (!tryAcquire(lockKey)) return;
+
             // IDEMPOTENCY — the in-memory `sent` flag does not survive a restart.
             // The anchor stamps stellar_transaction_id once it sees our payment,
             // so re-read its record before moving money. Without this, a crash
@@ -306,6 +317,7 @@ export class MoneyGramRamps {
 
             if (!decision.send) {
               sent = true;
+              release(lockKey);
               if (decision.reason === "already-sent") {
                 opts.onUpdate?.(freshView);
                 return;
@@ -335,6 +347,12 @@ export class MoneyGramRamps {
               this.fundsKp.sign(transfer);
               await stellar.submitTransaction(transfer);
             } catch (err) {
+              // Released only on failure. After a successful submission the
+              // claim is held for the life of the process: the anchor does not
+              // stamp stellar_transaction_id the instant we submit, so a caller
+              // that acquired the lock in that gap would re-read a record still
+              // showing no payment and send a second one.
+              release(lockKey);
               stop();
               reject(err);
             }
