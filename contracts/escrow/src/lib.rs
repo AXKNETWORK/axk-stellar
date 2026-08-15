@@ -11,11 +11,17 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, token, Address, BytesN, Env,
 };
 
+/// Ledgers close about every five seconds. An escrow's own deadlines run to
+/// ninety days, so its record has to outlive them by a margin or the money is
+/// stranded behind an archived entry.
+const DAY_LEDGERS: u32 = 17_280;
+const TRADE_TTL_THRESHOLD: u32 = DAY_LEDGERS * 120;
+const TRADE_TTL_EXTEND: u32 = DAY_LEDGERS * 180;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
-    AlreadyInitialised = 1,
     NotInitialised = 2,
     TradeExists = 3,
     NoSuchTrade = 4,
@@ -56,13 +62,10 @@ pub struct Escrow;
 
 #[contractimpl]
 impl Escrow {
-    /// The verifier is the only address permitted to release. It is set once.
-    pub fn init(env: Env, verifier: Address) -> Result<(), Error> {
-        if env.storage().instance().has(&Key::Verifier) {
-            return Err(Error::AlreadyInitialised);
-        }
+    /// Runs inside the deploy transaction, so there is no window in which a
+    /// stranger can claim the verifier role on a freshly deployed instance.
+    pub fn __constructor(env: Env, verifier: Address) {
         env.storage().instance().set(&Key::Verifier, &verifier);
-        Ok(())
     }
 
     pub fn verifier(env: Env) -> Result<Address, Error> {
@@ -94,22 +97,28 @@ impl Escrow {
         }
         buyer.require_auth();
 
-        token::Client::new(&env, &token_id).transfer(
-            &buyer,
-            &env.current_contract_address(),
-            &amount,
-        );
-
+        // State first, then the external call. `release` and `refund` already
+        // do this; `create` did not, which left the one path where a token
+        // contract is called before the trade exists in storage.
         env.storage().persistent().set(
             &key,
             &Trade {
-                buyer,
+                buyer: buyer.clone(),
                 destination,
-                token: token_id,
+                token: token_id.clone(),
                 amount,
                 deadline,
                 status: Status::Funded,
             },
+        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TRADE_TTL_THRESHOLD, TRADE_TTL_EXTEND);
+
+        token::Client::new(&env, &token_id).transfer(
+            &buyer,
+            &env.current_contract_address(),
+            &amount,
         );
         Ok(())
     }
@@ -170,10 +179,16 @@ impl Escrow {
     }
 
     pub fn get(env: Env, trade_id: BytesN<32>) -> Result<Trade, Error> {
+        let key = Key::Trade(trade_id);
+        let trade: Trade = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::NoSuchTrade)?;
         env.storage()
             .persistent()
-            .get(&Key::Trade(trade_id))
-            .ok_or(Error::NoSuchTrade)
+            .extend_ttl(&key, TRADE_TTL_THRESHOLD, TRADE_TTL_EXTEND);
+        Ok(trade)
     }
 }
 

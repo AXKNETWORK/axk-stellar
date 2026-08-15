@@ -14,6 +14,10 @@ use soroban_sdk::{
 
 const BPS: i128 = 10_000;
 
+const DAY_LEDGERS: u32 = 17_280;
+const TTL_THRESHOLD: u32 = DAY_LEDGERS * 120;
+const TTL_EXTEND: u32 = DAY_LEDGERS * 180;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -68,6 +72,9 @@ impl Splitter {
         }
 
         env.storage().persistent().set(&key, &shares);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND);
         Ok(())
     }
 
