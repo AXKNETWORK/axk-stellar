@@ -18,6 +18,12 @@ const DAY_LEDGERS: u32 = 17_280;
 const TRADE_TTL_THRESHOLD: u32 = DAY_LEDGERS * 120;
 const TRADE_TTL_EXTEND: u32 = DAY_LEDGERS * 180;
 
+/// A deadline has to stay inside the window the record is kept alive for.
+/// The extension above is 180 days and is refreshed on reads, but a trade
+/// nobody reads gets only the one applied at `create`, so a deadline beyond
+/// that could outlive its own record and strand the money it guards.
+const MAX_TERM_SECONDS: u64 = 150 * 86_400;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -29,6 +35,7 @@ pub enum Error {
     DeadlineNotReached = 6,
     DeadlineInPast = 7,
     AmountNotPositive = 8,
+    DeadlineTooFar = 9,
 }
 
 #[contracttype]
@@ -75,7 +82,13 @@ impl Escrow {
             .ok_or(Error::NotInitialised)
     }
 
-    /// Funds an escrow. The buyer's authorisation covers the transfer in.
+    /// Funds an escrow.
+    ///
+    /// Both the buyer and the verifier sign: the buyer because the money leaves
+    /// their account, the verifier because `trade_id` is caller-supplied and a
+    /// trade id can only be occupied once. Without the second signature anyone
+    /// could fund a one-stroop trade under the id of a real one and block it,
+    /// then take their stroop back at the deadline.
     pub fn create(
         env: Env,
         trade_id: BytesN<32>,
@@ -88,14 +101,19 @@ impl Escrow {
         if amount <= 0 {
             return Err(Error::AmountNotPositive);
         }
-        if deadline <= env.ledger().timestamp() {
+        let now = env.ledger().timestamp();
+        if deadline <= now {
             return Err(Error::DeadlineInPast);
+        }
+        if deadline - now > MAX_TERM_SECONDS {
+            return Err(Error::DeadlineTooFar);
         }
         let key = Key::Trade(trade_id);
         if env.storage().persistent().has(&key) {
             return Err(Error::TradeExists);
         }
         buyer.require_auth();
+        Self::verifier(env.clone())?.require_auth();
 
         // State first, then the external call. `release` and `refund` already
         // do this; `create` did not, which left the one path where a token
@@ -140,6 +158,9 @@ impl Escrow {
 
         trade.status = Status::Released;
         env.storage().persistent().set(&key, &trade);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TRADE_TTL_THRESHOLD, TRADE_TTL_EXTEND);
 
         token::Client::new(&env, &trade.token).transfer(
             &env.current_contract_address(),
@@ -169,6 +190,9 @@ impl Escrow {
 
         trade.status = Status::Refunded;
         env.storage().persistent().set(&key, &trade);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TRADE_TTL_THRESHOLD, TRADE_TTL_EXTEND);
 
         token::Client::new(&env, &trade.token).transfer(
             &env.current_contract_address(),

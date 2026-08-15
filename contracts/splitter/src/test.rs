@@ -12,6 +12,7 @@ struct Fixture<'a> {
     splitter: SplitterClient<'a>,
     token: TokenClient<'a>,
     source: Address,
+    coordinator: Address,
     coop: Address,
     farmer: Address,
     lender: Address,
@@ -28,11 +29,13 @@ fn setup() -> Fixture<'static> {
 
     let source = Address::generate(&env);
     minter.mint(&source, &1_000_000);
+    let coordinator = Address::generate(&env);
 
     Fixture {
-        splitter: SplitterClient::new(&env, &env.register(Splitter, ())),
+        splitter: SplitterClient::new(&env, &env.register(Splitter, (coordinator.clone(),))),
         token,
         source,
+        coordinator,
         coop: Address::generate(&env),
         farmer: Address::generate(&env),
         lender: Address::generate(&env),
@@ -168,6 +171,53 @@ fn a_split_cannot_be_rewritten_once_agreed() {
         ]),
         Err(Ok(Error::AlreadyConfigured)),
     );
+}
+
+#[test]
+fn the_coordinator_is_set_in_the_deploy_transaction() {
+    let f = setup();
+    assert_eq!(f.splitter.coordinator(), f.coordinator);
+}
+
+#[test]
+fn configure_demands_the_coordinator_signature_specifically() {
+    // mock_all_auths approves everything, so the question is not whether the
+    // call succeeded but whose authorisation it asked for. An unrestricted
+    // configure is fund theft, not just a nuisance: the split is write-once and
+    // the trade id is public, so a stranger who records their own division
+    // first is paid it, because distribute is authorised by the account paying
+    // out and not by any party to the trade.
+    let f = setup();
+    let id = trade_id(&f.env, 12);
+    f.splitter.configure(&id, &vec![
+        &f.env,
+        Share { party: f.farmer.clone(), bps: 10_000 },
+    ]);
+
+    let auths = f.env.auths();
+    assert_eq!(auths.first().map(|(a, _)| a.clone()), Some(f.coordinator.clone()));
+}
+
+#[test]
+fn a_stranger_cannot_record_a_division_that_pays_themselves() {
+    // The same check from the caller's side: with auth actually enforced rather
+    // than mocked, an attacker's configure fails, so the real split still fits
+    // in the trade id and the money goes where the parties agreed.
+    let env = Env::default();
+    let coordinator = Address::generate(&env);
+    let attacker = Address::generate(&env);
+    let splitter = SplitterClient::new(&env, &env.register(Splitter, (coordinator.clone(),)));
+    let id = trade_id(&env, 13);
+
+    let hostile = vec![&env, Share { party: attacker.clone(), bps: 10_000 }];
+    assert!(
+        splitter.try_configure(&id, &hostile).is_err(),
+        "a stranger configured the split",
+    );
+
+    env.mock_all_auths();
+    splitter.configure(&id, &vec![&env, Share { party: attacker.clone(), bps: 10_000 }]);
+    assert_eq!(splitter.shares(&id).len(), 1);
 }
 
 #[test]
