@@ -19,7 +19,7 @@ The trade record, escrow state and buyer-facing product live in AXK's main platf
 Two pieces:
 
 - **`packages/anchors`** — SEP-10 authentication and SEP-24 deposit and withdrawal against anchors, starting with MoneyGram. This is working code, running against MoneyGram's sandbox today.
-- **`contracts`** — Soroban escrow, payment splitter and trade attestation, in Rust. They build to wasm and pass 33 tests. Nothing is deployed yet. See [contracts/README.md](contracts/README.md).
+- **`contracts`** — Soroban escrow, payment splitter and trade attestation, in Rust. They build to wasm and pass 39 tests. Nothing is deployed yet. See [contracts/README.md](contracts/README.md).
 
 ## Status, honestly
 
@@ -31,8 +31,8 @@ We would rather you read this than discover it.
 | SEP-24 cash-out (withdraw) | Live | Interactive URL, transaction watcher, automatic USDC payment inside the transfer window. |
 | SEP-24 cash-in (deposit) | Live | Same flow inbound. |
 | Payment idempotency | Live, single process | Re-reads the anchor record before moving money, and holds a per-transaction claim so two concurrent watchers cannot both pay. Across two processes it needs a claim in shared storage, which the caller supplies. See [`decideSend`](packages/anchors/src/moneygram.ts) and [`locks.ts`](packages/anchors/src/locks.ts). |
-| Escrow contract | Built, not deployed | Soroban. Destination fixed at creation, verifier-gated release, permissionless refund after the deadline. 16 tests. |
-| Payment splitter | Built, not deployed | Soroban. Shares in basis points totalling exactly 10,000, rounding remainder assigned rather than dropped. 9 tests. |
+| Escrow contract | Built, not deployed | Soroban. Destination fixed at creation, verifier-gated release, permissionless refund after the deadline. Creation takes the verifier's signature too, so a trade id cannot be squatted. 19 tests. |
+| Payment splitter | Built, not deployed | Soroban. Shares in basis points totalling exactly 10,000, rounding remainder assigned rather than dropped, and the split writable only by the coordinator. 12 tests. |
 | Attestation registry | Built, not deployed | Soroban. Write-once digest per trade, restricted to the attester, with a `matches` check for lenders. 8 tests. |
 | Testnet deployment | Next | The contracts compile to wasm and pass their tests. Deploying them is the next milestone. |
 | MoneyGram production | In pipeline | Commercial onboarding, which runs on its own timeline rather than ours. |
@@ -81,7 +81,7 @@ docs                  setup, architecture, anchor notes, roadmap
 
 ```bash
 npm test                      # anchor client, 27 tests
-cargo test --manifest-path contracts/Cargo.toml    # contracts, 33 tests
+cargo test --manifest-path contracts/Cargo.toml    # contracts, 39 tests
 ```
 
 ## Tech stack

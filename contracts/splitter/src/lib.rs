@@ -7,6 +7,11 @@
 //! left sitting in the contract, is a balance that drifts by a stroop per
 //! settlement until somebody reconciles a year of it by hand. The remainder is
 //! assigned to a named party instead.
+//!
+//! A split is written once, by the coordinator, and read by anyone. Both halves
+//! of that matter: write-once so the division cannot be rewritten after the
+//! parties agree to it, and coordinator-only so nobody else can get their
+//! division in first.
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, token, Address, BytesN, Env, Vec,
@@ -41,6 +46,7 @@ pub struct Share {
 #[contracttype]
 #[derive(Clone)]
 enum Key {
+    Coordinator,
     Shares(BytesN<32>),
 }
 
@@ -49,9 +55,27 @@ pub struct Splitter;
 
 #[contractimpl]
 impl Splitter {
+    /// Set in the deploy transaction, so the role cannot be claimed by a
+    /// stranger between deployment and first use.
+    pub fn __constructor(env: Env, coordinator: Address) {
+        env.storage().instance().set(&Key::Coordinator, &coordinator);
+    }
+
+    pub fn coordinator(env: Env) -> Address {
+        env.storage().instance().get(&Key::Coordinator).unwrap()
+    }
+
     /// Records how a trade divides. Set once per trade, so the split cannot be
     /// rewritten after the parties have agreed to it.
+    ///
+    /// Restricted to the coordinator. Write-once and unrestricted together are
+    /// the dangerous pair: `trade_id` is public from the moment the escrow is
+    /// funded, so an open `configure` lets anyone record a division of their own
+    /// first — one that pays them everything — and `distribute` is authorised by
+    /// the account paying out, not by the parties, so it would honour it.
     pub fn configure(env: Env, trade_id: BytesN<32>, shares: Vec<Share>) -> Result<(), Error> {
+        Self::coordinator(env.clone()).require_auth();
+
         if shares.is_empty() {
             return Err(Error::NoShares);
         }

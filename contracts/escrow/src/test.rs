@@ -197,6 +197,59 @@ fn a_deadline_already_past_is_refused() {
 }
 
 #[test]
+fn a_deadline_beyond_the_records_own_lifetime_is_refused() {
+    // The record is kept alive for 180 days and only refreshed when something
+    // reads it. A trade nobody touches until a 300-day deadline could have its
+    // entry archived before then, which is the money stranded behind an
+    // unreadable record that the TTL handling exists to prevent.
+    let f = setup();
+    let deadline = f.env.ledger().timestamp() + 300 * DAY;
+    assert_eq!(
+        f.escrow.try_create(
+            &trade_id(&f.env, 5), &f.buyer, &f.destination,
+            &f.token.address, &100, &deadline,
+        ),
+        Err(Ok(Error::DeadlineTooFar)),
+    );
+}
+
+#[test]
+fn create_demands_the_verifier_signature_as_well_as_the_buyer() {
+    // trade_id is caller-supplied and can only be occupied once, so without the
+    // verifier's signature anyone could fund a one-stroop trade under a real
+    // trade's id, block it permanently, and reclaim their stroop at the
+    // deadline. Both signatures are asked for.
+    let f = setup();
+    fund(&f, &trade_id(&f.env, 1), 250);
+
+    let auths = f.env.auths();
+    assert!(auths.iter().any(|(a, _)| a == &f.buyer), "the buyer was not asked to sign");
+    assert!(auths.iter().any(|(a, _)| a == &f.verifier), "the verifier was not asked to sign");
+}
+
+#[test]
+fn a_stranger_cannot_squat_a_trade_id() {
+    let env = Env::default();
+    let issuer = Address::generate(&env);
+    let asset = env.register_stellar_asset_contract_v2(issuer);
+    let token = TokenClient::new(&env, &asset.address());
+    let verifier = Address::generate(&env);
+    let squatter = Address::generate(&env);
+    let escrow = EscrowClient::new(&env, &env.register(Escrow, (verifier,)));
+
+    let deadline = env.ledger().timestamp() + 30 * DAY;
+    assert!(
+        escrow
+            .try_create(
+                &trade_id(&env, 1), &squatter, &squatter,
+                &token.address, &1, &deadline,
+            )
+            .is_err(),
+        "a stranger occupied a trade id",
+    );
+}
+
+#[test]
 fn the_verifier_is_set_in_the_deploy_transaction() {
     // A separate init() left a window in which a stranger could claim the
     // verifier role on a freshly deployed instance and grief every trade on it.
