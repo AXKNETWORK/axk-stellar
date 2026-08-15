@@ -8,9 +8,15 @@
 //! commercially sensitive terms or anybody's personal data.
 //!
 //! Write-once is the point. An attestation that could be amended later would
-//! prove only what AXK last chose to say.
+//! prove only what AXK last chose to say. Write-once also means the first write
+//! wins, which is why writing is restricted rather than open: an open registry
+//! of write-once records is one an attacker can fill with junk ahead of you.
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, BytesN, Env};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, BytesN, Env};
+
+const DAY_LEDGERS: u32 = 17_280;
+const TTL_THRESHOLD: u32 = DAY_LEDGERS * 120;
+const TTL_EXTEND: u32 = DAY_LEDGERS * 180;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -31,6 +37,7 @@ pub struct Attestation {
 #[contracttype]
 #[derive(Clone)]
 enum Key {
+    Attester,
     Trade(BytesN<32>),
 }
 
@@ -39,13 +46,27 @@ pub struct Registry;
 
 #[contractimpl]
 impl Registry {
+    /// Set in the deploy transaction, so the role cannot be claimed by a
+    /// stranger between deployment and first use.
+    pub fn __constructor(env: Env, attester: Address) {
+        env.storage().instance().set(&Key::Attester, &attester);
+    }
+
+    pub fn attester(env: Env) -> Address {
+        env.storage().instance().get(&Key::Attester).unwrap()
+    }
+
     /// Records a digest against a trade. Fails if the trade already has one.
     ///
-    /// Deliberately unpermissioned on write: anyone may attest, because the
-    /// value of the record is the digest matching, not who submitted it. A
-    /// wrong digest from a stranger proves nothing and blocks nothing, since
-    /// the trade id is derived from the record it describes.
+    /// Writing is restricted to the attester. An earlier version let anyone
+    /// write, on the reasoning that a wrong digest from a stranger proves
+    /// nothing. That was wrong: the record is write-once, and `trade_id` is
+    /// public from the moment the escrow is funded, so anyone could race a junk
+    /// attestation in first and permanently block the real one. Being unable to
+    /// forge a record is no use if you can stop it existing.
     pub fn attest(env: Env, trade_id: BytesN<32>, digest: BytesN<32>) -> Result<(), Error> {
+        Self::attester(env.clone()).require_auth();
+
         let key = Key::Trade(trade_id);
         if env.storage().persistent().has(&key) {
             return Err(Error::AlreadyAttested);
@@ -58,6 +79,9 @@ impl Registry {
                 timestamp: env.ledger().timestamp(),
             },
         );
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND);
         Ok(())
     }
 
