@@ -27,6 +27,7 @@ The custodial model means AXK's funds account holds user balances. Compromise of
 Stated plainly because a reader will find them anyway.
 
 - No rate limiting on the HTTP API.
+- Payment idempotency is process-local. The client re-reads the anchor's record before sending and holds a per-transaction claim, which covers a restart and two concurrent callers in one process. Running more than one instance against the same transaction needs a claim in shared storage, and this package does not provide one. `POST /v1/ramps/:userId/:txId/watch` takes no idempotency key, so a caller behind a retrying load balancer must supply that guarantee itself.
 - No per-user authorization: a valid API key can start a ramp for any user id. The caller is trusted to be the AXK platform.
 - The demo page under `/demo/` is a development aid and has had no hardening review.
 - No Soroban contracts are deployed, so nothing here has been audited on chain.
