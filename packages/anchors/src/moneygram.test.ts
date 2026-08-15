@@ -133,6 +133,17 @@ describe("amount guards", () => {
       }), /positive USDC/);
     }
   });
+
+  test("rejects amounts that are not finite numbers", async () => {
+    // Number("NaN"), Number("abc") and Number("Infinity") are none of them
+    // <= 0, so a sign-only check let all three reach the anchor, which answered
+    // 500 with its own parser error. Caught against the live sandbox.
+    for (const amount of ["NaN", "Infinity", "-Infinity", "abc", "", "  "]) {
+      await assert.rejects(() => mg().start({
+        kind: "withdraw", userId: 1001, amount,
+      }), /positive USDC/, `accepted ${JSON.stringify(amount)}`);
+    }
+  });
 });
 
 describe("config safety", () => {

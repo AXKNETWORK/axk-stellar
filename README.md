@@ -30,7 +30,7 @@ We would rather you read this than discover it.
 | SEP-10 authentication | Working | Custodial, one Stellar account with `memoId` per AXK user. Tested against MoneyGram sandbox. |
 | SEP-24 cash-out (withdraw) | Working | Interactive URL, transaction watcher, automatic USDC payment inside the transfer window. |
 | SEP-24 cash-in (deposit) | Working | Same flow inbound. |
-| Payment idempotency | Working | Re-reads the anchor record before moving money. See [`decideSend`](packages/anchors/src/moneygram.ts). |
+| Payment idempotency | Working, single process | Re-reads the anchor record before moving money, and holds a per-transaction claim so two concurrent watchers cannot both pay. Across two processes it needs a claim in shared storage, which the caller supplies. See [`decideSend`](packages/anchors/src/moneygram.ts) and [`locks.ts`](packages/anchors/src/locks.ts). |
 | MoneyGram production | Not started | Sandbox only. Production requires commercial onboarding. |
 | Second anchor | Not started | At least one equivalent payout path per corridor is the goal. |
 | Soroban contracts | Not implemented | Interfaces drafted in `contracts/`. Nothing is deployed on testnet or mainnet. |
@@ -43,6 +43,8 @@ We would rather you read this than discover it.
 **The money decision is a pure function.** `decideSend` takes the anchor's record and the transfer deadline and returns whether to pay. It has no network access and no clock of its own, so the one decision that can lose real money is testable in isolation and is tested.
 
 **Idempotency comes from the anchor, not from memory.** An in-process "already sent" flag does not survive a restart. A crash between submitting a payment and confirming it would re-send and pay twice. So before moving USDC the client re-reads the transaction from the anchor and checks whether `stellar_transaction_id` is already stamped on it.
+
+That re-read handles a restart but not a race. Two watchers on the same transaction would both read it before either payment landed, both see nothing stamped, and both pay. A per-transaction claim closes that within one process. Across several processes the claim has to live somewhere shared, and this package does not provide it.
 
 **The transfer window is enforced.** MoneyGram gives a deadline in `user_action_required_by`. USDC sent after it closes is gone and no cash is handed over at the other end. The client refuses to send rather than paying into a closed window.
 
