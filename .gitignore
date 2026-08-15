@@ -6,3 +6,6 @@ target/
 .wallet-testnet.json
 *.log
 .DS_Store
+
+target/
+Cargo.lock
