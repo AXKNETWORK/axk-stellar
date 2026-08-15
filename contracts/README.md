@@ -2,7 +2,7 @@
 
 Soroban contracts for holding, splitting and attesting a settled trade. Written in Rust, building to wasm, covered by 39 tests.
 
-**Nothing is deployed.** They pass their tests and compile to wasm; they have not been on testnet, and they have not been audited. Do not put value near them yet.
+**Deployed to testnet, and nowhere else.** They pass their tests, compile to wasm, and have been exercised on-chain — see [../docs/deployments.md](../docs/deployments.md) for IDs and what was actually run. They have not been audited. Do not put value near them yet.
 
 ```bash
 cargo test                                        # 39 tests

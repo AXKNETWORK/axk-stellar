@@ -5,12 +5,12 @@
 ![Stellar](https://img.shields.io/badge/Stellar-SEP--10%20%7C%20SEP--24-black)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A520-green)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)
-![Soroban](https://img.shields.io/badge/Soroban-planned-lightgrey)
+![Soroban](https://img.shields.io/badge/Soroban-testnet-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 AXK settles agricultural commodity trade between African producers and international buyers. A cooperative delivers coffee, the delivery is verified, and the money has to reach several hundred farmers who do not hold crypto and want cash. This repository is the Stellar half of that: the anchor integrations that turn USDC into cash a farmer can collect, and the contracts that will hold and split the money on the way there.
 
-[Setup](docs/setup.md) · [Architecture](docs/architecture.md) · [Anchors](docs/anchors.md) · [Roadmap](docs/roadmap.md) · [Contributing](CONTRIBUTING.md)
+[Setup](docs/setup.md) · [Architecture](docs/architecture.md) · [Anchors](docs/anchors.md) · [Deployments](docs/deployments.md) · [Roadmap](docs/roadmap.md) · [Contributing](CONTRIBUTING.md)
 
 ## Overview
 
@@ -19,7 +19,7 @@ The trade record, escrow state and buyer-facing product live in AXK's main platf
 Two pieces:
 
 - **`packages/anchors`** — SEP-10 authentication and SEP-24 deposit and withdrawal against anchors, starting with MoneyGram. This is working code, running against MoneyGram's sandbox today.
-- **`contracts`** — Soroban escrow, payment splitter and trade attestation, in Rust. They build to wasm and pass 39 tests. Nothing is deployed yet. See [contracts/README.md](contracts/README.md).
+- **`contracts`** — Soroban escrow, payment splitter and trade attestation, in Rust. They build to wasm, pass 39 tests, and are deployed to testnet. See [contracts/README.md](contracts/README.md) and [docs/deployments.md](docs/deployments.md).
 
 ## Status, honestly
 
@@ -31,10 +31,10 @@ We would rather you read this than discover it.
 | SEP-24 cash-out (withdraw) | Live | Interactive URL, transaction watcher, automatic USDC payment inside the transfer window. |
 | SEP-24 cash-in (deposit) | Live | Same flow inbound. |
 | Payment idempotency | Live, single process | Re-reads the anchor record before moving money, and holds a per-transaction claim so two concurrent watchers cannot both pay. Across two processes it needs a claim in shared storage, which the caller supplies. See [`decideSend`](packages/anchors/src/moneygram.ts) and [`locks.ts`](packages/anchors/src/locks.ts). |
-| Escrow contract | Built, not deployed | Soroban. Destination fixed at creation, verifier-gated release, permissionless refund after the deadline. Creation takes the verifier's signature too, so a trade id cannot be squatted. 19 tests. |
-| Payment splitter | Built, not deployed | Soroban. Shares in basis points totalling exactly 10,000, rounding remainder assigned rather than dropped, and the split writable only by the coordinator. 12 tests. |
-| Attestation registry | Built, not deployed | Soroban. Write-once digest per trade, restricted to the attester, with a `matches` check for lenders. 8 tests. |
-| Testnet deployment | Next | The contracts compile to wasm and pass their tests. Deploying them is the next milestone. |
+| Escrow contract | On testnet | Soroban. Destination fixed at creation, verifier-gated release, permissionless refund after the deadline. Creation takes the verifier's signature too, so a trade id cannot be squatted. 19 tests. |
+| Payment splitter | On testnet | Soroban. Shares in basis points totalling exactly 10,000, rounding remainder assigned rather than dropped, and the split writable only by the coordinator. 12 tests. |
+| Attestation registry | On testnet | Soroban. Write-once digest per trade, restricted to the attester, with a `matches` check for lenders. 8 tests. |
+| Testnet deployment | Live | All three deployed and exercised on-chain, including the paths a mocked authoriser hides. IDs and what was tested are in [docs/deployments.md](docs/deployments.md). |
 | MoneyGram production | In pipeline | Commercial onboarding, which runs on its own timeline rather than ours. |
 | Second anchor | In pipeline | At least one equivalent payout path per corridor. |
 | Capability-aware routing | Designed | Specified in [docs/architecture.md](docs/architecture.md). Waiting on a second anchor, since with one there is nothing to route between. |
