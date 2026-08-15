@@ -32,8 +32,7 @@ fn setup() -> Fixture<'static> {
     let verifier = Address::generate(&env);
     minter.mint(&buyer, &1_000);
 
-    let escrow = EscrowClient::new(&env, &env.register(Escrow, ()));
-    escrow.init(&verifier);
+    let escrow = EscrowClient::new(&env, &env.register(Escrow, (verifier.clone(),)));
 
     Fixture { env, escrow, token, buyer, destination, verifier }
 }
@@ -198,11 +197,20 @@ fn a_deadline_already_past_is_refused() {
 }
 
 #[test]
-fn the_verifier_is_set_once() {
+fn the_verifier_is_set_in_the_deploy_transaction() {
+    // A separate init() left a window in which a stranger could claim the
+    // verifier role on a freshly deployed instance and grief every trade on it.
     let f = setup();
-    let other = Address::generate(&f.env);
-    assert_eq!(f.escrow.try_init(&other), Err(Ok(Error::AlreadyInitialised)));
     assert_eq!(f.escrow.verifier(), f.verifier);
+}
+
+#[test]
+fn create_demands_the_buyer_signature_specifically() {
+    let f = setup();
+    f.env.auths();
+    fund(&f, &trade_id(&f.env, 1), 250);
+    let auths = f.env.auths();
+    assert_eq!(auths.first().map(|(a, _)| a.clone()), Some(f.buyer.clone()));
 }
 
 #[test]

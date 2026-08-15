@@ -1,11 +1,11 @@
 # Contracts
 
-Soroban contracts for holding, splitting and attesting a settled trade. Written in Rust, building to wasm, covered by 30 tests.
+Soroban contracts for holding, splitting and attesting a settled trade. Written in Rust, building to wasm, covered by 33 tests.
 
 **Nothing is deployed.** They pass their tests and compile to wasm; they have not been on testnet, and they have not been audited. Do not put value near them yet.
 
 ```bash
-cargo test                                        # 30 tests
+cargo test                                        # 33 tests
 cargo build --release --target wasm32-unknown-unknown
 ```
 
@@ -14,7 +14,7 @@ cargo build --release --target wasm32-unknown-unknown
 Holds a buyer's payment against one trade until delivery is verified.
 
 ```
-init(verifier)
+__constructor(verifier)
 create(trade_id, buyer, destination, token, amount, deadline)
 release(trade_id)     // verifier only
 refund(trade_id)      // after the deadline, by anyone
@@ -26,6 +26,8 @@ get(trade_id)
 **Refund needs no signature.** Once the deadline passes, anyone can trigger the return to the buyer. If it required a privileged caller, a buyer's money would depend on AXK still being around to sign for it. `refund_demands_no_signature_at_all` asserts the authorisation set is empty.
 
 **A deadline already in the past is rejected at creation**, otherwise an escrow is refundable the instant it is funded while looking settled.
+
+**The verifier is set in the deploy transaction.** A separate `init` call left a window in which a stranger could claim the role on a freshly deployed instance and then refuse to release anything on it.
 
 The state machine is `Funded → Released` or `Funded → Refunded`, and nothing else. Releasing twice, refunding a released trade, and releasing a refunded one are each tested and each refused.
 
@@ -55,10 +57,20 @@ matches(trade_id, digest) -> bool
 
 Stores a digest over a canonical serialisation of the trade record, never the record. A lender shown a trade hashes it and calls `matches`, confirming it is the record that settled without AXK vouching for it and without the ledger carrying commercial terms or personal data.
 
-**Write-once.** An attestation that could be amended would prove only what AXK last chose to say. **Writing is unpermissioned**, because the value is in the digest matching, not in who submitted it, and `matches` on an unknown trade returns false rather than raising.
+**Write-once, and restricted to the attester.** An attestation that could be amended would prove only what AXK last chose to say.
+
+Writing was open in the first version, on the reasoning that a wrong digest from a stranger proves nothing. That reasoning was wrong and QA caught it: `trade_id` is public from the moment an escrow is funded, and the record is write-once, so anyone could race a junk attestation in first and block the real one permanently. Being unable to forge a record is no use to an attacker who can stop it existing. The attester is set in the deploy transaction.
+
+`matches` on an unknown trade returns false rather than raising, so a lender checking an unrecognised trade gets an answer rather than an error.
+
+## Storage lifetime
+
+Soroban archives persistent entries that are not used. An escrow's own deadlines run to ninety days, so every entry is written with a TTL extension well beyond that, and reads extend it again. Without this an escrow could outlive its own record and strand the buyer's money behind an archived entry.
 
 ## What is still owed
 
 The canonicalisation these digests are taken over has to be published and stable before the attestation means anything to an outside party. That is a specification problem, not a contract one, and it is not solved yet.
+
+The splitter's `amount` has no on-chain link to what the escrow actually released. The two contracts are independent, so a backend bug could distribute a figure that looks correct and is not. Binding them is a design decision not yet made.
 
 Beyond that: testnet deployment, a STRIDE threat model over the contracts and the privileged accounts, monitoring derived from it, and an external audit with findings remediated. Pause and upgrade controls are not implemented; both are admin powers and belong in the threat model before they exist in code.
