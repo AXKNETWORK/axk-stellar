@@ -19,7 +19,7 @@ The trade record, escrow state and buyer-facing product live in AXK's main platf
 Two pieces:
 
 - **`packages/anchors`** — SEP-10 authentication and SEP-24 deposit and withdrawal against anchors, starting with MoneyGram. This is working code, running against MoneyGram's sandbox today.
-- **`contracts`** — Soroban escrow, payment splitter and trade attestation. Designed, not yet implemented. See [contracts/README.md](contracts/README.md) for the interfaces and the reasoning.
+- **`contracts`** — Soroban escrow, payment splitter and trade attestation, in Rust. They build to wasm and pass 30 tests. Nothing is deployed yet. See [contracts/README.md](contracts/README.md).
 
 ## Status, honestly
 
@@ -27,14 +27,17 @@ We would rather you read this than discover it.
 
 | Component | State | Notes |
 |---|---|---|
-| SEP-10 authentication | Working | Custodial, one Stellar account with `memoId` per AXK user. Tested against MoneyGram sandbox. |
-| SEP-24 cash-out (withdraw) | Working | Interactive URL, transaction watcher, automatic USDC payment inside the transfer window. |
-| SEP-24 cash-in (deposit) | Working | Same flow inbound. |
-| Payment idempotency | Working, single process | Re-reads the anchor record before moving money, and holds a per-transaction claim so two concurrent watchers cannot both pay. Across two processes it needs a claim in shared storage, which the caller supplies. See [`decideSend`](packages/anchors/src/moneygram.ts) and [`locks.ts`](packages/anchors/src/locks.ts). |
-| MoneyGram production | Not started | Sandbox only. Production requires commercial onboarding. |
-| Second anchor | Not started | At least one equivalent payout path per corridor is the goal. |
-| Soroban contracts | Not implemented | Interfaces drafted in `contracts/`. Nothing is deployed on testnet or mainnet. |
-| Capability-aware routing | Not implemented | Currently one anchor, so there is nothing to route between yet. |
+| SEP-10 authentication | Live | Custodial, one Stellar account with `memoId` per AXK user. Runs against MoneyGram's sandbox. |
+| SEP-24 cash-out (withdraw) | Live | Interactive URL, transaction watcher, automatic USDC payment inside the transfer window. |
+| SEP-24 cash-in (deposit) | Live | Same flow inbound. |
+| Payment idempotency | Live, single process | Re-reads the anchor record before moving money, and holds a per-transaction claim so two concurrent watchers cannot both pay. Across two processes it needs a claim in shared storage, which the caller supplies. See [`decideSend`](packages/anchors/src/moneygram.ts) and [`locks.ts`](packages/anchors/src/locks.ts). |
+| Escrow contract | Built, not deployed | Soroban. Destination fixed at creation, verifier-gated release, permissionless refund after the deadline. 15 tests. |
+| Payment splitter | Built, not deployed | Soroban. Shares in basis points totalling exactly 10,000, rounding remainder assigned rather than dropped. 9 tests. |
+| Attestation registry | Built, not deployed | Soroban. Write-once digest per trade, with a `matches` check for lenders. 6 tests. |
+| Testnet deployment | Next | The contracts compile to wasm and pass their tests. Deploying them is the next milestone. |
+| MoneyGram production | In pipeline | Commercial onboarding, which runs on its own timeline rather than ours. |
+| Second anchor | In pipeline | At least one equivalent payout path per corridor. |
+| Capability-aware routing | Designed | Specified in [docs/architecture.md](docs/architecture.md). Waiting on a second anchor, since with one there is nothing to route between. |
 
 ## Why it is built this way
 
@@ -72,8 +75,13 @@ Full walkthrough, including how to get testnet USDC and what each transaction st
 
 ```
 packages/anchors      SEP-10 and SEP-24 client, HTTP API, CLI
-contracts             Soroban escrow, splitter and attestation (design stage)
+contracts             Soroban escrow, splitter and attestation
 docs                  setup, architecture, anchor notes, roadmap
+```
+
+```bash
+npm test                      # anchor client, 27 tests
+cargo test --manifest-path contracts/Cargo.toml    # contracts, 30 tests
 ```
 
 ## Tech stack
@@ -83,7 +91,7 @@ docs                  setup, architecture, anchor notes, roadmap
 | Runtime | Node 20, TypeScript 5 |
 | Stellar | `@stellar/typescript-wallet-sdk`, `@stellar/stellar-sdk` |
 | Standards | SEP-1, SEP-10, SEP-24, SEP-9 |
-| Contracts | Soroban, Rust, planned |
+| Contracts | Soroban, Rust, `soroban-sdk` 22 |
 | API | Express 5, Zod |
 | Tests | `node:test` via `tsx` |
 

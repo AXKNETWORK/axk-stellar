@@ -1,53 +1,64 @@
 # Contracts
 
-**Nothing here is implemented.** This directory holds the design for the Soroban contracts, written down before the code so the interfaces can be argued with cheaply. There is no deployment on testnet or mainnet.
+Soroban contracts for holding, splitting and attesting a settled trade. Written in Rust, building to wasm, covered by 30 tests.
 
-## Three contracts
+**Nothing is deployed.** They pass their tests and compile to wasm; they have not been on testnet, and they have not been audited. Do not put value near them yet.
 
-### Escrow
-
-Holds a buyer's USDC against a specific trade until delivery is verified.
-
-The destination is fixed when the escrow is created and cannot be changed afterwards. This is the point of the contract: it means a compromised AXK operator can stall a release but cannot redirect the money. Any design where an admin can retarget funds mid-flight gives up the only guarantee worth having.
-
-```
-create(trade_id, buyer, destination, amount, deadline)
-release(trade_id, verification)   // verifier role only
-refund(trade_id)                  // after deadline, to the buyer, by anyone
+```bash
+cargo test                                        # 30 tests
+cargo build --release --target wasm32-unknown-unknown
 ```
 
-Refund after the deadline is deliberately callable by anyone. If it needed a privileged caller, a buyer's money would depend on AXK still existing.
+## Escrow
 
-### Splitter
-
-Divides a released amount between the cooperative, its members and any financier, atomically.
-
-The invariant is that the parts sum exactly to the whole. Not approximately: a rounding remainder has to be assigned to a named party, not dropped or left in the contract, or the balance drifts by a stroop per settlement until someone notices a year later.
+Holds a buyer's payment against one trade until delivery is verified.
 
 ```
-configure(trade_id, shares)   // shares must total 100%
-distribute(trade_id, amount)
+init(verifier)
+create(trade_id, buyer, destination, token, amount, deadline)
+release(trade_id)     // verifier only
+refund(trade_id)      // after the deadline, by anyone
+get(trade_id)
 ```
 
-### Attestation registry
+**The destination is fixed at creation and `release` takes no address.** That is the guarantee the contract exists for. A compromised verifier can stall a release or let the deadline run out, but has no parameter through which to send the money somewhere else. `there_is_no_way_to_name_a_destination_at_release` exists to fail if anyone ever adds one.
 
-Write-once record that a trade settled, keyed by trade id, storing a digest over a canonical serialisation of the trade record.
+**Refund needs no signature.** Once the deadline passes, anyone can trigger the return to the buyer. If it required a privileged caller, a buyer's money would depend on AXK still being around to sign for it. `refund_demands_no_signature_at_all` asserts the authorisation set is empty.
 
-The point is that a lender can be shown a trade record, hash it themselves, and confirm it matches what settled, without AXK vouching for it and without the ledger holding commercially sensitive terms. That requires the canonicalisation to be published and stable, which is the hard part and is not solved by the contract.
+**A deadline already in the past is rejected at creation**, otherwise an escrow is refundable the instant it is funded while looking settled.
+
+The state machine is `Funded → Released` or `Funded → Refunded`, and nothing else. Releasing twice, refunding a released trade, and releasing a refunded one are each tested and each refused.
+
+## Splitter
+
+Divides a released payment between the cooperative, its members and any financier.
 
 ```
-attest(trade_id, digest)      // fails if trade_id already present
-get(trade_id) -> digest
+configure(trade_id, shares)   // basis points, totalling exactly 10,000
+distribute(trade_id, token, from, amount)
+shares(trade_id)
 ```
 
-## Design commitments
+**The parts sum to exactly the whole.** Integer division leaves a remainder, and a remainder that is dropped or left in the contract is a balance that drifts by a stroop per settlement until someone reconciles a year of it by hand. The remainder goes to the last share. `a_rounding_remainder_is_paid_out_not_dropped` splits 1,001 three ways at 3333/3333/3334 and asserts the payments total 1,001 exactly.
 
-**Audited patterns, not clever ones.** Access control, pausing and upgrades come from OpenZeppelin's Stellar contracts rather than being written here.
+**A share of zero or below is refused**, not just a total that misses. Otherwise `10000 + 0` and `12000 + -2000` both total correctly while describing a split that is not one.
 
-**Roles are separated and each is tested against what it must not do.** A verifier cannot move funds. An admin cannot retarget an escrow. The tests assert the negatives, because a test that only proves the happy path proves nothing about authority.
+**A configured split cannot be rewritten**, so it cannot change after the parties agreed to it.
 
-**Pausable, upgradeable, and honest about what that means.** Both are admin powers, and an admin key is a trust assumption however it is stored. They are here because a bug in a live money contract with no pause is worse. The threat model has to state who holds those keys and under what controls.
+## Attestation registry
 
-## Before any of this holds real value
+```
+attest(trade_id, digest)
+get(trade_id)
+matches(trade_id, digest) -> bool
+```
 
-An external audit, with findings remediated and re-reviewed. A STRIDE threat model over the contracts, the privileged accounts and the orchestrator, with monitoring derived from it. Neither has been done.
+Stores a digest over a canonical serialisation of the trade record, never the record. A lender shown a trade hashes it and calls `matches`, confirming it is the record that settled without AXK vouching for it and without the ledger carrying commercial terms or personal data.
+
+**Write-once.** An attestation that could be amended would prove only what AXK last chose to say. **Writing is unpermissioned**, because the value is in the digest matching, not in who submitted it, and `matches` on an unknown trade returns false rather than raising.
+
+## What is still owed
+
+The canonicalisation these digests are taken over has to be published and stable before the attestation means anything to an outside party. That is a specification problem, not a contract one, and it is not solved yet.
+
+Beyond that: testnet deployment, a STRIDE threat model over the contracts and the privileged accounts, monitoring derived from it, and an external audit with findings remediated. Pause and upgrade controls are not implemented; both are admin powers and belong in the threat model before they exist in code.
