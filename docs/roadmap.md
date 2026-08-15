@@ -5,7 +5,8 @@ Ordered by dependency rather than by preference. Each item lands with tests.
 ## Now
 
 - **Second anchor.** One anchor is a dependency, not a rail. The goal is at least two workable payout paths per corridor.
-- **Soroban escrow, splitter and attestation.** Interfaces are in [contracts/README.md](../contracts/README.md). Nothing is deployed.
+- **Testnet deployment of the contracts.** Escrow, splitter and attestation are written and tested; getting them onto testnet with published addresses is the next step.
+- **Canonical serialisation for attestation digests.** The contract stores a digest; the rule for producing it has to be published and stable before an outside party can rely on it.
 - **Persistent payout state.** Transaction state currently lives with the caller. It needs to be event-sourced and durable so a restart resumes rather than restarts.
 
 ## Next
